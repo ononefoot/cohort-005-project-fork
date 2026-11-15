@@ -36,6 +36,7 @@ import {
 import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent } from "~/components/ui/card";
+import { Textarea } from "~/components/ui/textarea";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -44,8 +45,11 @@ import {
   ChevronRight,
   Circle,
   Clock,
+  Bookmark,
+  BookmarkCheck,
   Github,
   HelpCircle,
+  NotebookPen,
   MapPin,
   PlayCircle,
   ShieldAlert,
@@ -53,7 +57,15 @@ import {
   Trophy,
   RotateCcw,
 } from "lucide-react";
-import { cn, formatDuration } from "~/lib/utils";
+import { cn, formatDuration, formatRelativeTime } from "~/lib/utils";
+import {
+  getOwnNote,
+  isBookmarked,
+  noteBodySchema,
+  saveNote,
+  toggleBookmark,
+  type OwnNote,
+} from "~/lib/saved.server";
 import { renderMarkdown } from "~/lib/markdown.server";
 import { YouTubePlayer } from "~/components/youtube-player";
 import { data, isRouteErrorResponse } from "react-router";
@@ -80,6 +92,10 @@ const editCommentSchema = z.object({
   intent: z.literal("edit-comment"),
   commentId: z.coerce.number().int(),
   body: z.string(),
+});
+
+const saveNoteSchema = z.object({
+  body: noteBodySchema,
 });
 
 const deleteCommentSchema = z.object({
@@ -172,6 +188,15 @@ function getLessonById(id: number) {
 
 function getModuleById(id: number) {
   return db.select().from(modules).where(eq(modules.id, id)).get();
+}
+
+function lessonBelongsToCourse(lessonId: number, courseId: number) {
+  return !!db
+    .select({ id: lessons.id })
+    .from(lessons)
+    .innerJoin(modules, eq(lessons.moduleId, modules.id))
+    .where(and(eq(lessons.id, lessonId), eq(modules.courseId, courseId)))
+    .get();
 }
 
 function getUserById(id: number) {
@@ -689,6 +714,12 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     ? await renderThread(getLessonThread(lessonId))
     : [];
 
+  // The Student's own Bookmark and Note. Shown only to someone who can read the
+  // lesson, the same bar as the discussion; a signed-out visitor gets neither.
+  const showSaved = canViewContent && currentUserId !== null;
+  const bookmarked = showSaved && isBookmarked(db, currentUserId, lessonId);
+  const note = showSaved ? getOwnNote(db, currentUserId, lessonId) : null;
+
   // Render lesson content from Markdown to HTML server-side
   const contentHtml = lesson.content
     ? await renderMarkdown(lesson.content)
@@ -783,6 +814,9 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     canViewContent,
     canModerate: access.isStaff,
     instructorName: instructor?.name ?? "your instructor",
+    showSaved,
+    bookmarked,
+    note,
   };
 }
 
@@ -880,6 +914,28 @@ export async function action({ params, request }: Route.ActionArgs) {
     }
   }
 
+  // Bookmark and Note intents re-check access here too, and scope the lesson
+  // to this course so a lesson elsewhere can't be reached through this route.
+  if (intent === "toggle-bookmark" || intent === "save-note") {
+    await requireContentAccess(request, course.id);
+    if (!lessonBelongsToCourse(lessonId, course.id)) {
+      throw data("Lesson not found in this course", { status: 404 });
+    }
+
+    if (intent === "toggle-bookmark") {
+      return {
+        ok: true,
+        bookmarked: toggleBookmark(db, currentUserId, lessonId, new Date()),
+      };
+    }
+
+    const parsed = parseFormData(formData, saveNoteSchema);
+    if (!parsed.success) {
+      return { ok: false, error: parsed.errors.body ?? "Could not save that note." };
+    }
+    return saveNote(db, currentUserId, lessonId, parsed.data.body, new Date());
+  }
+
   if (intent === "mark-complete") {
     markLessonComplete(currentUserId, lessonId);
     return { success: true };
@@ -966,6 +1022,9 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
     canViewContent,
     canModerate,
     instructorName,
+    showSaved,
+    bookmarked,
+    note,
   } = loaderData;
   const [autoplay, toggleAutoplay] = useAutoplay();
   const fetcher = useFetcher({ key: `mark-complete-${lesson.id}` });
@@ -1066,7 +1125,10 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
 
         <div className="mx-auto max-w-4xl">
           {/* Lesson Title */}
-          <h1 className="mb-2 text-3xl font-bold">{lesson.title}</h1>
+          <div className="mb-2 flex items-start justify-between gap-4">
+            <h1 className="text-3xl font-bold">{lesson.title}</h1>
+            {showSaved && <BookmarkToggle bookmarked={bookmarked} />}
+          </div>
           <div className="mb-6 flex items-center gap-3">
             {lesson.durationMinutes && (
               <div className="flex items-center gap-1 text-sm text-muted-foreground">
@@ -1102,6 +1164,9 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
               onToggleAutoplay={toggleAutoplay}
             />
           )}
+
+          {/* Note */}
+          {showSaved && <LessonNote note={note} />}
 
           {/* Lesson Content */}
           {contentHtml && (
@@ -1237,6 +1302,76 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
         </div>
       </div>
     </div>
+  );
+}
+
+function BookmarkToggle({ bookmarked }: { bookmarked: boolean }) {
+  const fetcher = useFetcher();
+  // Flip as soon as it is pressed; the loader's value takes over once the
+  // server has answered.
+  const shown = fetcher.state === "idle" ? bookmarked : !bookmarked;
+
+  return (
+    <fetcher.Form method="post" className="shrink-0">
+      <input type="hidden" name="intent" value="toggle-bookmark" />
+      <Button
+        type="submit"
+        variant="outline"
+        size="sm"
+        aria-pressed={shown}
+        disabled={fetcher.state !== "idle"}
+      >
+        {shown ? (
+          <BookmarkCheck className="mr-1.5 size-4" />
+        ) : (
+          <Bookmark className="mr-1.5 size-4" />
+        )}
+        {shown ? "Bookmarked" : "Bookmark"}
+      </Button>
+    </fetcher.Form>
+  );
+}
+
+function LessonNote({ note }: { note: OwnNote | null }) {
+  const fetcher = useFetcher<{ ok: boolean; error?: string }>();
+  const isSaving = fetcher.state !== "idle";
+  const error = fetcher.data?.ok === false ? fetcher.data.error : undefined;
+
+  return (
+    <Card className="mb-8">
+      <CardContent className="space-y-3 pt-6">
+        <div className="flex items-center gap-2">
+          <NotebookPen className="size-4 text-muted-foreground" />
+          <h2 className="font-semibold">Your note</h2>
+        </div>
+
+        <fetcher.Form method="post" className="space-y-3">
+          <input type="hidden" name="intent" value="save-note" />
+          {/* Plain text: the body is never passed through the Markdown renderer. */}
+          <Textarea
+            name="body"
+            rows={6}
+            defaultValue={note?.body ?? ""}
+            placeholder="Only you can read this."
+            className="resize-y"
+          />
+          <div className="flex items-center gap-3">
+            <Button type="submit" size="sm" disabled={isSaving}>
+              {isSaving ? "Saving..." : "Save"}
+            </Button>
+            {note && (
+              <span
+                suppressHydrationWarning
+                className="text-xs text-muted-foreground"
+              >
+                Last edited {formatRelativeTime(note.updatedAt)}
+              </span>
+            )}
+            {error && <span className="text-sm text-red-600">{error}</span>}
+          </div>
+        </fetcher.Form>
+      </CardContent>
+    </Card>
   );
 }
 
