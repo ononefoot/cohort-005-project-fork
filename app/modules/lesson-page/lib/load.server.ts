@@ -24,7 +24,7 @@ import {
   getQuizByLessonId,
   getQuizWithQuestions,
 } from "./quiz.server";
-import { lessonRef } from "./ref";
+import { lessonRef, type LessonRouteArgs } from "./ref";
 
 type FlatLesson = {
   id: number;
@@ -54,13 +54,7 @@ function flattenCourseLessons(course: {
   return flat;
 }
 
-export async function loadLessonPage({
-  params,
-  request,
-}: {
-  params: { slug: string; lessonId: string };
-  request: Request;
-}) {
+export async function loadLessonPage({ params, request }: LessonRouteArgs) {
   // Not found covers an unknown course, a malformed lesson id, and a lesson
   // from another course.
   const decisions = await coursePermissions.getCourseDecisions(

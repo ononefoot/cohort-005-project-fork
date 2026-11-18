@@ -6,13 +6,13 @@ import { Card, CardContent } from "~/components/ui/card";
 import { Textarea } from "~/components/ui/textarea";
 import { MAX_NOTE_LENGTH } from "~/lib/notes";
 import { cn, formatRelativeTime } from "~/lib/utils";
-import { describeDraft, type NoteDraftStatus } from "~/modules/lesson-note";
+import {
+  describeDraft,
+  type NoteDraftStatus,
+  type SavedNote,
+} from "~/modules/lesson-note";
 
-export function LessonNote({
-  note,
-}: {
-  note: { body: string; updatedAt: string } | null;
-}) {
+export function LessonNote({ note }: { note: SavedNote | null }) {
   const fetcher = useFetcher<{ ok: boolean; error?: string }>();
   const [draft, setDraft] = useState(note?.body ?? "");
   const { status, canSave, length } = describeDraft({

@@ -1,10 +1,7 @@
 import { loadLessonPage as load } from "./lib/load.server";
 import { runLessonAction as run } from "./lib/action.server";
 
-type RouteArgs = {
-  params: { slug: string; lessonId: string };
-  request: Request;
-};
+import type { LessonRouteArgs as RouteArgs } from "./lib/ref";
 
 /**
  * Everything the lesson page shows. Throws a 404 for a lesson the course
