@@ -27,7 +27,7 @@ describe("describeDraft", () => {
     const draft = describeDraft(input({ draft: "   \n" }));
     expect(draft.status).toEqual({ kind: "empty" });
     expect(draft.canSave).toBe(false);
-    expect(draft.length).toBe(4);
+    expect(draft.length).toBe(0);
   });
 
   it("can save a new draft", () => {
@@ -88,6 +88,45 @@ describe("describeDraft", () => {
   it("cannot resubmit an empty draft after an error", () => {
     const draft = describeDraft(
       input({ draft: " ", error: "Write something" })
+    );
+    expect(draft.canSave).toBe(false);
+  });
+
+  it("is saved after the action trims the Note it stored", () => {
+    const draft = describeDraft(
+      input({ draft: `  ${saved.body}\n`, saved, maxLength: 100 })
+    );
+    expect(draft.status).toEqual({ kind: "saved", updatedAt: "2026-11-01" });
+    expect(draft.canSave).toBe(false);
+  });
+
+  it("matches a saved Note whose line breaks arrived as CRLF", () => {
+    const draft = describeDraft(
+      input({
+        draft: "line one\nline two",
+        saved: { body: "line one\r\nline two", updatedAt: "2026-11-01" },
+        maxLength: 100,
+      })
+    );
+    expect(draft.status).toEqual({ kind: "saved", updatedAt: "2026-11-01" });
+    expect(draft.canSave).toBe(false);
+  });
+
+  it("counts a line break as one character, as the action does", () => {
+    const draft = describeDraft(input({ draft: "a\r\nb" }));
+    expect(draft.length).toBe(3);
+  });
+
+  it("counts the text the action stores, without surrounding whitespace", () => {
+    const draft = describeDraft(input({ draft: ` ${"x".repeat(20)} ` }));
+    expect(draft.status).toEqual({ kind: "unsaved" });
+    expect(draft.length).toBe(20);
+    expect(draft.canSave).toBe(true);
+  });
+
+  it("cannot resubmit the saved Note after an error", () => {
+    const draft = describeDraft(
+      input({ draft: saved.body, saved, error: "Nope", maxLength: 100 })
     );
     expect(draft.canSave).toBe(false);
   });

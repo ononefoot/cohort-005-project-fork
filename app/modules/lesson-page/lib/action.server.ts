@@ -19,7 +19,7 @@ import { MAX_NOTE_LENGTH } from "~/lib/notes";
 import { parseFormData } from "~/lib/validation";
 import { getCommentById, markLessonComplete } from "./queries.server";
 import { computeResult } from "./quiz.server";
-import { lessonRef } from "./ref";
+import { lessonRef, type LessonRouteArgs } from "./ref";
 
 const createCommentSchema = z.object({
   intent: z.literal("create-comment"),
@@ -34,13 +34,20 @@ const editCommentSchema = z.object({
 });
 
 const saveNoteSchema = z.object({
+  // Browsers submit a textarea's line breaks as CRLF. Store LF, so the limit
+  // counts a line break once, as the editor's character counter does.
   body: z
     .string()
-    .trim()
-    .min(1, "Write something before saving your note.")
-    .max(
-      MAX_NOTE_LENGTH,
-      `Your note is over ${MAX_NOTE_LENGTH.toLocaleString("en")} characters, so it was not saved.`
+    .transform((body) => body.replace(/\r\n/g, "\n"))
+    .pipe(
+      z
+        .string()
+        .trim()
+        .min(1, "Write something before saving your note.")
+        .max(
+          MAX_NOTE_LENGTH,
+          `Your note is over ${MAX_NOTE_LENGTH.toLocaleString("en")} characters, so it was not saved.`
+        )
     ),
 });
 
@@ -64,13 +71,7 @@ const INTENT_CAPABILITY: Record<string, Capability | undefined> = {
   "submit-quiz": "take",
 };
 
-export async function runLessonAction({
-  params,
-  request,
-}: {
-  params: { slug: string; lessonId: string };
-  request: Request;
-}) {
+export async function runLessonAction({ params, request }: LessonRouteArgs) {
   const formData = await request.formData();
   const intent = formData.get("intent");
 

@@ -6,9 +6,11 @@ export type NoteDraftStatus =
   | { kind: "unsaved" }
   | { kind: "saved"; updatedAt: string };
 
+export type SavedNote = { body: string; updatedAt: string };
+
 export type NoteDraftInput = {
   draft: string;
-  saved: { body: string; updatedAt: string } | null;
+  saved: SavedNote | null;
   isSaving: boolean;
   error: string | undefined;
   maxLength: number;
@@ -20,35 +22,44 @@ export type NoteDraft = {
   length: number;
 };
 
-function statusOf(input: NoteDraftInput): NoteDraftStatus {
-  const { draft, saved, isSaving, error, maxLength } = input;
+/**
+ * The text the action stores for this draft. The browser submits a
+ * textarea's line breaks as CRLF and the action trims and stores LF, so a
+ * draft compared or counted as typed would never match its saved Note.
+ */
+function asStored(text: string): string {
+  return text.replace(/\r\n/g, "\n").trim();
+}
+
+function statusOf(input: NoteDraftInput, body: string): NoteDraftStatus {
+  const { saved, isSaving, error, maxLength } = input;
   if (isSaving) return { kind: "saving" };
-  if (draft.length > maxLength) {
-    return { kind: "too-long", over: draft.length - maxLength };
+  if (body.length > maxLength) {
+    return { kind: "too-long", over: body.length - maxLength };
   }
   if (error) return { kind: "error", message: error };
-  if (saved && draft === saved.body) {
+  if (saved && body === asStored(saved.body)) {
     return { kind: "saved", updatedAt: saved.updatedAt };
   }
-  // The action trims before saving, so whitespace alone is nothing to save.
-  if (draft.trim().length === 0) return { kind: "empty" };
+  if (body.length === 0) return { kind: "empty" };
   return { kind: "unsaved" };
 }
 
-function canSave(input: NoteDraftInput): boolean {
-  const { draft, saved, isSaving, maxLength } = input;
+function canSave(input: NoteDraftInput, body: string): boolean {
+  const { saved, isSaving, maxLength } = input;
   return (
     !isSaving &&
-    draft.length <= maxLength &&
-    draft.trim().length > 0 &&
-    draft !== saved?.body
+    body.length > 0 &&
+    body.length <= maxLength &&
+    (saved === null || body !== asStored(saved.body))
   );
 }
 
 export function describeDraft(input: NoteDraftInput): NoteDraft {
+  const body = asStored(input.draft);
   return {
-    status: statusOf(input),
-    canSave: canSave(input),
-    length: input.draft.length,
+    status: statusOf(input, body),
+    canSave: canSave(input, body),
+    length: body.length,
   };
 }
